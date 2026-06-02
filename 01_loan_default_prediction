@@ -103,6 +103,9 @@ fico_default_rate = (
 )
 
 fico_default_rate
+import os
+os.makedirs("../outputs", exist_ok=True)
+
 plt.figure(figsize=(9, 5))
 plt.bar(
     fico_default_rate["fico_band"].astype(str),
@@ -114,7 +117,10 @@ plt.ylabel("Default Rate")
 plt.title("Default Rate by FICO Score Band")
 plt.xticks(rotation=30, ha="right")
 plt.tight_layout()
+
+plt.savefig("../outputs/default_rate_by_fico.png", dpi=150)
 plt.show()
+
 ## Train/Test Split
 
 The data is split into training and testing sets so the model can be evaluated on borrowers it did not see during training.
