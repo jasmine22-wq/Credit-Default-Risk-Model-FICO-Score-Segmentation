@@ -1,0 +1,300 @@
+# Loan Default Prediction Model
+
+## Objective
+Build a credit risk model that estimates a borrower’s probability of default using loan and borrower-level financial data.
+
+## Business Context
+Credit risk teams use probability of default models to support underwriting, portfolio monitoring, risk segmentation, and expected loss analysis.
+
+This project uses borrower features such as income, outstanding debt, loan balance, years employed, credit lines outstanding, and FICO score to predict whether a borrower defaults.
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    roc_auc_score,
+    roc_curve,
+    confusion_matrix,
+    classification_report,
+    ConfusionMatrixDisplay
+)
+## Load Dataset
+
+The dataset contains borrower-level loan information and a binary default outcome.
+
+The target variable is:
+
+- `default`: 1 if the borrower defaulted, 0 otherwise
+DATA_PATH = "../data/loan_data.csv"
+
+df = pd.read_csv(DATA_PATH)
+
+df.head()
+print("Dataset shape:", df.shape)
+
+print("\nColumns:")
+print(df.columns.tolist())
+
+print("\nMissing values:")
+print(df.isna().sum())
+
+print("\nDefault distribution:")
+print(df["default"].value_counts())
+
+print("\nDefault rate:")
+print(df["default"].mean())
+## Data Dictionary
+
+| Column | Description |
+|---|---|
+| `customer_id` | Unique borrower identifier |
+| `credit_lines_outstanding` | Number of active credit lines |
+| `loan_amt_outstanding` | Outstanding loan balance |
+| `total_debt_outstanding` | Total debt owed by borrower |
+| `income` | Borrower income |
+| `years_employed` | Number of years employed |
+| `fico_score` | Borrower FICO credit score |
+| `default` | Binary target variable: 1 = default, 0 = no default |
+## Feature Engineering
+
+Raw loan values are useful, but credit risk models often benefit from ratio-based features.
+
+Two key features are created:
+
+- `payment_to_income`: outstanding loan amount divided by income
+- `debt_to_income`: total debt outstanding divided by income
+
+These ratios help measure borrower leverage and repayment burden.
+df["payment_to_income"] = df["loan_amt_outstanding"] / df["income"]
+df["debt_to_income"] = df["total_debt_outstanding"] / df["income"]
+
+features = [
+    "credit_lines_outstanding",
+    "debt_to_income",
+    "payment_to_income",
+    "years_employed",
+    "fico_score"
+]
+
+target = "default"
+
+X = df[features]
+y = df[target]
+
+X.head()
+X.describe()
+## Exploratory Analysis
+
+Before modeling, review how borrower characteristics differ between borrowers who defaulted and borrowers who did not.
+df.groupby("default")[features].mean()
+df["fico_band"] = pd.cut(
+    df["fico_score"],
+    bins=[300, 550, 600, 650, 700, 750, 850],
+    include_lowest=True
+)
+
+fico_default_rate = (
+    df.groupby("fico_band", observed=False)["default"]
+    .mean()
+    .reset_index()
+)
+
+fico_default_rate
+plt.figure(figsize=(9, 5))
+plt.bar(
+    fico_default_rate["fico_band"].astype(str),
+    fico_default_rate["default"]
+)
+
+plt.xlabel("FICO Score Band")
+plt.ylabel("Default Rate")
+plt.title("Default Rate by FICO Score Band")
+plt.xticks(rotation=30, ha="right")
+plt.tight_layout()
+plt.show()
+## Train/Test Split
+
+The data is split into training and testing sets so the model can be evaluated on borrowers it did not see during training.
+
+A stratified split is used to preserve the default rate across both datasets.
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.20,
+    random_state=42,
+    stratify=y
+)
+
+print("Training rows:", X_train.shape[0])
+print("Testing rows:", X_test.shape[0])
+## Logistic Regression Model
+
+Logistic regression is commonly used as a baseline credit risk model because it is interpretable and produces probability estimates.
+
+The model estimates the probability that a borrower defaults.
+logit_model = LogisticRegression(
+    max_iter=1000,
+    solver="liblinear",
+    class_weight="balanced"
+)
+
+logit_model.fit(X_train, y_train)
+y_pred = logit_model.predict(X_test)
+y_prob = logit_model.predict_proba(X_test)[:, 1]
+## Model Evaluation
+
+The model is evaluated using:
+
+- ROC-AUC
+- Classification report
+- Confusion matrix
+
+ROC-AUC is useful because it measures how well the model ranks borrowers by default risk.
+auc = roc_auc_score(y_test, y_prob)
+
+print(f"ROC-AUC: {auc:.4f}")
+
+print("\nClassification Report:")
+print(classification_report(y_test, y_pred))
+fpr, tpr, thresholds = roc_curve(y_test, y_prob)
+
+plt.figure(figsize=(7, 5))
+plt.plot(fpr, tpr, label=f"ROC-AUC = {auc:.3f}")
+plt.plot([0, 1], [0, 1], linestyle="--", label="Random Classifier")
+
+plt.xlabel("False Positive Rate")
+plt.ylabel("True Positive Rate")
+plt.title("Loan Default Model ROC Curve")
+plt.legend()
+plt.tight_layout()
+
+plt.savefig("../outputs/model_performance.png", dpi=150)
+plt.show()
+cm = confusion_matrix(y_test, y_pred)
+
+display = ConfusionMatrixDisplay(confusion_matrix=cm)
+display.plot()
+
+plt.title("Confusion Matrix")
+plt.tight_layout()
+plt.show()
+## Feature Interpretation
+
+Logistic regression coefficients help explain which borrower characteristics increase or decrease estimated default risk.
+
+Positive coefficients are associated with higher default risk.  
+Negative coefficients are associated with lower default risk.
+coef_table = pd.DataFrame({
+    "feature": features,
+    "coefficient": logit_model.coef_[0]
+}).sort_values("coefficient", ascending=False)
+
+coef_table
+## Expected Loss Framework
+
+Credit risk teams often translate probability of default into expected loss.
+
+Expected loss is calculated as:
+
+`Expected Loss = Probability of Default × Exposure at Default × Loss Given Default`
+
+Where:
+
+- Probability of Default is estimated by the model
+- Exposure at Default is the outstanding loan balance
+- Loss Given Default is the share of the loan not recovered after default
+
+For this project, recovery rate is assumed to be 10%, so loss given default is 90%.
+def predict_pd(
+    credit_lines_outstanding,
+    loan_amt_outstanding,
+    total_debt_outstanding,
+    income,
+    years_employed,
+    fico_score
+):
+    payment_to_income = loan_amt_outstanding / income
+    debt_to_income = total_debt_outstanding / income
+
+    borrower = pd.DataFrame([{
+        "credit_lines_outstanding": credit_lines_outstanding,
+        "debt_to_income": debt_to_income,
+        "payment_to_income": payment_to_income,
+        "years_employed": years_employed,
+        "fico_score": fico_score
+    }])
+
+    pd_value = logit_model.predict_proba(borrower)[:, 1][0]
+
+    return pd_value
+
+
+def expected_loss(
+    credit_lines_outstanding,
+    loan_amt_outstanding,
+    total_debt_outstanding,
+    income,
+    years_employed,
+    fico_score,
+    recovery_rate=0.10
+):
+    pd_value = predict_pd(
+        credit_lines_outstanding,
+        loan_amt_outstanding,
+        total_debt_outstanding,
+        income,
+        years_employed,
+        fico_score
+    )
+
+    exposure_at_default = loan_amt_outstanding
+    loss_given_default = 1 - recovery_rate
+
+    return pd_value * exposure_at_default * loss_given_default
+sample_pd = predict_pd(
+    credit_lines_outstanding=3,
+    loan_amt_outstanding=10000,
+    total_debt_outstanding=15000,
+    income=50000,
+    years_employed=5,
+    fico_score=700
+)
+
+sample_el = expected_loss(
+    credit_lines_outstanding=3,
+    loan_amt_outstanding=10000,
+    total_debt_outstanding=15000,
+    income=50000,
+    years_employed=5,
+    fico_score=700
+)
+
+print(f"Estimated Probability of Default: {sample_pd:.2%}")
+print(f"Estimated Expected Loss: ${sample_el:,.2f}")
+## Challenger Model: Decision Tree
+
+A decision tree is tested as a challenger model to compare performance against logistic regression.
+from sklearn.tree import DecisionTreeClassifier
+
+tree_model = DecisionTreeClassifier(
+    max_depth=4,
+    random_state=42
+)
+
+tree_model.fit(X_train, y_train)
+
+tree_prob = tree_model.predict_proba(X_test)[:, 1]
+tree_auc = roc_auc_score(y_test, tree_prob)
+
+print(f"Logistic Regression ROC-AUC: {auc:.4f}")
+print(f"Decision Tree ROC-AUC: {tree_auc:.4f}")
+
+## Key Takeaways
+
+- Borrower leverage ratios, employment history, credit lines, and FICO score can be used to estimate default risk.
+- Logistic regression provides an interpretable probability of default model.
+- The model can be extended into expected loss analysis by combining probability of default, exposure, and recovery assumptions.
+- This workflow is relevant for credit risk, underwriting, portfolio monitoring, and risk analytics.
