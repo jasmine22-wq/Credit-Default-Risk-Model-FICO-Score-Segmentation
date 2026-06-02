@@ -21,6 +21,9 @@ from sklearn.metrics import (
     classification_report,
     ConfusionMatrixDisplay
 )
+## Interpretation
+
+A higher ROC-AUC means the model is better at ranking borrowers by default risk. In a credit risk setting, this is useful because lenders often care about separating higher-risk borrowers from lower-risk borrowers, even before making a final approve/decline decision.
 ## Load Dataset
 
 The dataset contains borrower-level loan information and a binary default outcome.
